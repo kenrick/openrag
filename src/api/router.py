@@ -30,6 +30,8 @@ async def upload_ingest_router(
     delete_after_ingest: str = Form("true"),
     replace_duplicates: str = Form("true"),
     create_filter: str = Form("false"),
+    allowed_users_json: Optional[str] = Form(None, alias="allowed_users"),
+    allowed_groups_json: Optional[str] = Form(None, alias="allowed_groups"),
     document_service=Depends(get_document_service),
     langflow_file_service=Depends(get_langflow_file_service),
     session_manager=Depends(get_session_manager),
@@ -67,6 +69,8 @@ async def upload_ingest_router(
         delete_after_ingest=delete_after_ingest.lower() == "true",
         replace_duplicates=replace_duplicates.lower() == "true",
         create_filter=create_filter.lower() == "true",
+        allowed_users_json=allowed_users_json,
+        allowed_groups_json=allowed_groups_json,
         langflow_file_service=langflow_file_service,
         session_manager=session_manager,
         task_service=task_service,
@@ -86,6 +90,8 @@ async def _langflow_upload_ingest_task(
     session_manager,
     task_service,
     user: User,
+    allowed_users_json: Optional[str] = None,
+    allowed_groups_json: Optional[str] = None,
 ):
     """Task-based langflow upload and ingest for single/multiple files"""
     try:
@@ -94,6 +100,8 @@ async def _langflow_upload_ingest_task(
 
         settings = None
         tweaks = None
+        allowed_users = None
+        allowed_groups = None
 
         if settings_json:
             try:
@@ -106,6 +114,26 @@ async def _langflow_upload_ingest_task(
                 tweaks = json.loads(tweaks_json)
             except json.JSONDecodeError as e:
                 return JSONResponse({"error": f"Invalid tweaks JSON: {e}"}, status_code=400)
+
+        if allowed_users_json:
+            try:
+                allowed_users = json.loads(allowed_users_json)
+                if not isinstance(allowed_users, list):
+                    raise ValueError("allowed_users must be a JSON array of strings")
+            except (json.JSONDecodeError, ValueError) as e:
+                return JSONResponse(
+                    {"error": f"Invalid allowed_users JSON: {e}"}, status_code=400
+                )
+
+        if allowed_groups_json:
+            try:
+                allowed_groups = json.loads(allowed_groups_json)
+                if not isinstance(allowed_groups, list):
+                    raise ValueError("allowed_groups must be a JSON array of strings")
+            except (json.JSONDecodeError, ValueError) as e:
+                return JSONResponse(
+                    {"error": f"Invalid allowed_groups JSON: {e}"}, status_code=400
+                )
 
         user_id = user.user_id
         user_name = user.name
@@ -143,6 +171,8 @@ async def _langflow_upload_ingest_task(
                 settings=settings,
                 delete_after_ingest=delete_after_ingest,
                 replace_duplicates=replace_duplicates,
+                allowed_users=allowed_users,
+                allowed_groups=allowed_groups,
             )
 
             return JSONResponse(

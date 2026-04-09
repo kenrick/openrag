@@ -139,6 +139,8 @@ class TaskService:
         replace_duplicates: bool = False,
         connector_type: str = "local",
         existing_task_id: str = None,
+        allowed_users: list | None = None,
+        allowed_groups: list | None = None,
     ) -> str:
         """Create a new upload task for Langflow file processing with upload and ingest"""
         # Use LangflowFileProcessor with user context
@@ -157,6 +159,8 @@ class TaskService:
             delete_after_ingest=delete_after_ingest,
             replace_duplicates=replace_duplicates,
             connector_type=connector_type,
+            allowed_users=allowed_users,
+            allowed_groups=allowed_groups,
         )
         return await self.create_custom_task(user_id, file_paths, processor, original_filenames, existing_task_id=existing_task_id)
 

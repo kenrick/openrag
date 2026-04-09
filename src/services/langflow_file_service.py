@@ -475,7 +475,9 @@ class LangflowFileService:
         owner: Optional[str] = None,
         owner_name: Optional[str] = None,
         owner_email: Optional[str] = None,
-        connector_type: Optional[str] = None,   
+        connector_type: Optional[str] = None,
+        allowed_users: Optional[List[str]] = None,
+        allowed_groups: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
         Combined upload, ingest, and delete operation.
@@ -567,6 +569,8 @@ class LangflowFileService:
                 owner_name=owner_name,
                 owner_email=owner_email,
                 connector_type=connector_type,
+                allowed_users=allowed_users,
+                allowed_groups=allowed_groups,
             )
             logger.debug("[LF] Ingestion completed successfully")
         except Exception as e:

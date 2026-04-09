@@ -37,6 +37,8 @@ async def ingest_endpoint(
     delete_after_ingest: str = Form("true"),
     replace_duplicates: str = Form("true"),
     create_filter: str = Form("false"),
+    allowed_users: Optional[str] = Form(None),
+    allowed_groups: Optional[str] = Form(None),
     document_service=Depends(get_document_service),
     langflow_file_service=Depends(get_langflow_file_service),
     session_manager=Depends(get_session_manager),
@@ -48,6 +50,10 @@ async def ingest_endpoint(
 
     POST /v1/documents/ingest
     Request: multipart/form-data with "file" field
+
+    Optional ACL fields (JSON-encoded string lists):
+      - allowed_users: list of user/agent IDs allowed to retrieve chunks
+      - allowed_groups: list of group IDs allowed to retrieve chunks
     """
     # Delegate to the router which handles both Langflow and traditional paths
     return await upload_ingest_router(
@@ -58,6 +64,8 @@ async def ingest_endpoint(
         delete_after_ingest=delete_after_ingest,
         replace_duplicates=replace_duplicates,
         create_filter=create_filter,
+        allowed_users_json=allowed_users,
+        allowed_groups_json=allowed_groups,
         document_service=document_service,
         langflow_file_service=langflow_file_service,
         session_manager=session_manager,
