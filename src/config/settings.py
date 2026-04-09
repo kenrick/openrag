@@ -394,12 +394,23 @@ class AppClients:
             connect_timeout_seconds=LANGFLOW_CONNECT_TIMEOUT,
         )
 
-        # Wait for Langflow to be healthy before generating API key
-        from utils.langflow_utils import wait_for_langflow
-        await wait_for_langflow(langflow_http_client=self.langflow_http_client)
+        # Wait for Langflow to be healthy before generating API key.
+        #
+        # Skip the wait (and the API key step) entirely when ingestion via
+        # Langflow is disabled — in that mode the backend never talks to
+        # Langflow at runtime, so blocking startup on a dead Langflow
+        # service is pointless and prevents minimal deployments
+        # (recall-style: backend + opensearch only) from booting.
+        if DISABLE_INGEST_WITH_LANGFLOW:
+            logger.info(
+                "DISABLE_INGEST_WITH_LANGFLOW=true — skipping Langflow readiness check"
+            )
+        else:
+            from utils.langflow_utils import wait_for_langflow
+            await wait_for_langflow(langflow_http_client=self.langflow_http_client)
 
-        # Generate Langflow API key now that Langflow is confirmed ready
-        await get_langflow_api_key()
+            # Generate Langflow API key now that Langflow is confirmed ready
+            await get_langflow_api_key()
 
         # Initialize Langflow client with generated/provided API key
         if LANGFLOW_KEY and self.langflow_client is None:
