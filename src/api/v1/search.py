@@ -43,12 +43,31 @@ async def search_endpoint(
         score_threshold=body.score_threshold,
     )
 
+    # ----- Server-side tenant scoping (DLS) ---------------------------------
+    #
+    # Force-inject `allowed_users = [user.user_id]` so the calling API key
+    # can ONLY retrieve chunks tagged with its own user_id. This is the
+    # security boundary for multi-tenant deployments — the caller cannot
+    # widen this filter (we overwrite anything they sent), and they cannot
+    # remove it (we always set it).
+    #
+    # Anonymous keys (user_id == "anonymous") are exempt: they keep the
+    # legacy "see everything that wasn't tenant-tagged" behavior so single-
+    # user deployments are unaffected.
+    enforced_filters = dict(body.filters or {})
+    if user.user_id and user.user_id != "anonymous":
+        enforced_filters["allowed_users"] = [user.user_id]
+        logger.debug(
+            "DLS: forcing allowed_users filter from API key user_id",
+            user_id=user.user_id,
+        )
+
     try:
         result = await search_service.search(
             query,
             user_id=user.user_id,
             jwt_token=None,  # API key auth has no JWT
-            filters=body.filters or {},
+            filters=enforced_filters,
             limit=body.limit,
             score_threshold=body.score_threshold,
         )

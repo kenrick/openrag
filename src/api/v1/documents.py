@@ -51,10 +51,24 @@ async def ingest_endpoint(
     POST /v1/documents/ingest
     Request: multipart/form-data with "file" field
 
-    Optional ACL fields (JSON-encoded string lists):
-      - allowed_users: list of user/agent IDs allowed to retrieve chunks
-      - allowed_groups: list of group IDs allowed to retrieve chunks
+    Tenant scoping (DLS): if the calling API key is bound to a non-anonymous
+    user_id, every chunk produced from this upload is force-tagged with
+    `allowed_users = [user.user_id]`. The caller-supplied `allowed_users`
+    form field is ignored in that case — the API key's identity wins.
+
+    For anonymous keys, the caller-supplied form field still applies (legacy
+    behavior, unchanged).
     """
+    # ----- Force tenant scoping for non-anonymous API keys -------------------
+    enforced_allowed_users_json = allowed_users
+    if user.user_id and user.user_id != "anonymous":
+        import json
+        enforced_allowed_users_json = json.dumps([user.user_id])
+        logger.debug(
+            "DLS: forcing allowed_users on ingest from API key user_id",
+            user_id=user.user_id,
+        )
+
     # Delegate to the router which handles both Langflow and traditional paths
     return await upload_ingest_router(
         file=file,
@@ -64,7 +78,7 @@ async def ingest_endpoint(
         delete_after_ingest=delete_after_ingest,
         replace_duplicates=replace_duplicates,
         create_filter=create_filter,
-        allowed_users_json=allowed_users,
+        allowed_users_json=enforced_allowed_users_json,
         allowed_groups_json=allowed_groups,
         document_service=document_service,
         langflow_file_service=langflow_file_service,

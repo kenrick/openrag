@@ -4,6 +4,8 @@ API Key management endpoints.
 These endpoints use JWT cookie authentication (for the UI) and allow users
 to create, list, and revoke their API keys for use with the public API.
 """
+from typing import Optional
+
 from fastapi import Depends
 from pydantic import BaseModel, Field
 from fastapi.responses import JSONResponse
@@ -17,6 +19,22 @@ logger = get_logger(__name__)
 
 class CreateKeyBody(BaseModel):
     name: str = Field(..., max_length=100, description="Name for the API key")
+    # Optional override of the user_id stored on the key. When set, the
+    # minted key will resolve (via get_api_key_user_async) to a User with
+    # this user_id rather than the user who minted it. Used by recall to
+    # mint per-agent keys whose identity matches the agent slug, so the
+    # /v1/search endpoint can enforce per-tenant scoping (DLS) without
+    # the model needing to inject filters.
+    key_user_id: Optional[str] = Field(
+        default=None,
+        max_length=100,
+        description="Override the user_id stored on the key (multi-tenant)",
+    )
+    key_user_email: Optional[str] = Field(
+        default=None,
+        max_length=200,
+        description="Override the email stored on the key",
+    )
 
 
 async def list_keys_endpoint(
@@ -51,9 +69,16 @@ async def create_key_endpoint(
                 status_code=400,
             )
 
+        # If the caller supplied an override (key_user_id), the minted key
+        # will carry that as its identity instead of the minter's. The
+        # minter still has to be authenticated — we just relabel what the
+        # key resolves to. JWT for OpenSearch indexing stays the minter's.
+        effective_user_id = body.key_user_id or user.user_id
+        effective_user_email = body.key_user_email or user.email
+
         result = await api_key_service.create_key(
-            user_id=user.user_id,
-            user_email=user.email,
+            user_id=effective_user_id,
+            user_email=effective_user_email,
             name=name,
             jwt_token=user.jwt_token,
         )
