@@ -27,11 +27,18 @@ class UploadBucketBody(BaseModel):
 
 async def upload(
     file: UploadFile = File(...),
+    allowed_users: Optional[list] = None,
+    allowed_groups: Optional[list] = None,
     document_service=Depends(get_document_service),
     session_manager=Depends(get_session_manager),
     user: User = Depends(get_current_user),
 ):
-    """Upload a single file"""
+    """Upload a single file.
+
+    `allowed_users` / `allowed_groups` are accepted as already-parsed Python
+    lists from a calling router (the form-field parsing happens upstream in
+    upload_ingest_router so the same lists work for both ingest paths).
+    """
     try:
 
         from config.settings import is_no_auth_mode
@@ -51,6 +58,8 @@ async def upload(
             jwt_token=user.jwt_token,
             owner_name=owner_name,
             owner_email=owner_email,
+            allowed_users=allowed_users,
+            allowed_groups=allowed_groups,
         )
         return JSONResponse(result, status_code=201)
     except Exception as e:

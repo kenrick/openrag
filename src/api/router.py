@@ -51,10 +51,34 @@ async def upload_ingest_router(
 
     if DISABLE_INGEST_WITH_LANGFLOW:
         logger.debug("Routing to traditional OpenRAG upload")
+        # Parse ACL form fields here so the traditional path receives Python lists.
+        traditional_allowed_users = None
+        traditional_allowed_groups = None
+        if allowed_users_json:
+            try:
+                traditional_allowed_users = json.loads(allowed_users_json)
+                if not isinstance(traditional_allowed_users, list):
+                    raise ValueError("allowed_users must be a JSON array of strings")
+            except (json.JSONDecodeError, ValueError) as e:
+                return JSONResponse(
+                    {"error": f"Invalid allowed_users JSON: {e}"}, status_code=400
+                )
+        if allowed_groups_json:
+            try:
+                traditional_allowed_groups = json.loads(allowed_groups_json)
+                if not isinstance(traditional_allowed_groups, list):
+                    raise ValueError("allowed_groups must be a JSON array of strings")
+            except (json.JSONDecodeError, ValueError) as e:
+                return JSONResponse(
+                    {"error": f"Invalid allowed_groups JSON: {e}"}, status_code=400
+                )
+
         # Route to traditional upload — just take the first file
         from api.upload import upload as traditional_upload_fn
         return await traditional_upload_fn(
             file=file[0] if file else None,
+            allowed_users=traditional_allowed_users,
+            allowed_groups=traditional_allowed_groups,
             document_service=document_service,
             session_manager=session_manager,
             user=user,

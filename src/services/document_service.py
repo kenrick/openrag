@@ -100,6 +100,8 @@ class DocumentService:
         jwt_token: str = None,
         owner_name: str = None,
         owner_email: str = None,
+        allowed_users: list = None,
+        allowed_groups: list = None,
     ):
         """Process an uploaded file from form data"""
         from utils.hash_utils import hash_id
@@ -140,6 +142,18 @@ class DocumentService:
             # Use consolidated standard processing
             from models.processors import TaskProcessor
             processor = TaskProcessor(document_service=self)
+
+            # Build a DocumentACL when caller supplied allowed_users / allowed_groups.
+            # process_document_standard will stamp these onto every chunk.
+            acl = None
+            if allowed_users is not None or allowed_groups is not None:
+                from connectors.base import DocumentACL
+                acl = DocumentACL(
+                    owner=owner_user_id,
+                    allowed_users=allowed_users or [],
+                    allowed_groups=allowed_groups or [],
+                )
+
             result = await processor.process_document_standard(
                 file_path=tmp_path,
                 file_hash=file_hash,
@@ -150,6 +164,7 @@ class DocumentService:
                 owner_email=owner_email,
                 file_size=file_size,
                 connector_type="local",
+                acl=acl,
             )
             return result
 
