@@ -121,10 +121,13 @@ class TaskProcessor:
             },
         }
         try:
+            # NOTE: do NOT set refresh=True here. The OpenRAG anonymous user
+            # role lacks `indices:admin/refresh`, and the operation 403s.
+            # Eventual consistency (default ~1s refresh interval) is fine
+            # for our use case — the next search will see the merged tag.
             resp = await opensearch_client.update_by_query(
                 index=get_index_name(),
                 body=body,
-                refresh=True,
                 wait_for_completion=True,
                 conflicts="proceed",
             )
