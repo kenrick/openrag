@@ -23,7 +23,16 @@ class TaskProcessor:
     ) -> bool:
         """
         Check if a document with the given hash already exists in OpenSearch.
-        Consolidated hash checking for all processors.
+
+        IMPORTANT: chunks are stored with `_id = file_hash + "_" + chunk_idx`,
+        not `_id = file_hash`. The original implementation called
+        `opensearch_client.exists(id=file_hash)` which always returned False
+        for chunked content, so dedup never kicked in and every re-upload
+        re-embedded the file AND overwrote the existing chunks (because the
+        new chunk `_id`s collided with the old ones).
+
+        We instead query for any chunk whose `document_id` field equals the
+        file hash. That correctly detects re-uploads.
         """
         from config.settings import get_index_name
         import asyncio
@@ -33,8 +42,18 @@ class TaskProcessor:
 
         for attempt in range(max_retries):
             try:
-                exists = await opensearch_client.exists(index=get_index_name(), id=file_hash)
-                return exists
+                resp = await opensearch_client.search(
+                    index=get_index_name(),
+                    body={
+                        "size": 0,
+                        "query": {"term": {"document_id": file_hash}},
+                        "track_total_hits": True,
+                    },
+                )
+                total = resp.get("hits", {}).get("total", {})
+                # OpenSearch returns total as an int (legacy) or {value, relation}.
+                count = total.get("value", 0) if isinstance(total, dict) else int(total or 0)
+                return count > 0
             except (asyncio.TimeoutError, Exception) as e:
                 if attempt == max_retries - 1:
                     logger.error(
@@ -59,6 +78,72 @@ class TaskProcessor:
                     )
                     await asyncio.sleep(retry_delay)
                     retry_delay *= 2  # Exponential backoff
+
+    async def merge_allowed_users_for_document(
+        self,
+        file_hash: str,
+        new_users: list,
+        opensearch_client,
+    ) -> int:
+        """
+        Append `new_users` to the `allowed_users` array of every chunk whose
+        `document_id` matches `file_hash`, without duplicating values.
+
+        Returns the number of chunks updated.
+
+        Used by `process_document_standard` when re-ingesting identical
+        content under a different tenant: instead of re-embedding (which
+        would overwrite the existing chunks and clobber the prior tenant's
+        tag), we update the existing chunks in place to include the new
+        tenant's slug. Set-union semantics.
+        """
+        from config.settings import get_index_name
+
+        if not new_users:
+            return 0
+
+        body = {
+            "query": {"term": {"document_id": file_hash}},
+            "script": {
+                "source": (
+                    "if (ctx._source.allowed_users == null) { "
+                    "  ctx._source.allowed_users = []; "
+                    "} "
+                    "for (int i = 0; i < params.new_users.length; i++) { "
+                    "  def u = params.new_users[i]; "
+                    "  if (!ctx._source.allowed_users.contains(u)) { "
+                    "    ctx._source.allowed_users.add(u); "
+                    "  } "
+                    "}"
+                ),
+                "lang": "painless",
+                "params": {"new_users": list(new_users)},
+            },
+        }
+        try:
+            resp = await opensearch_client.update_by_query(
+                index=get_index_name(),
+                body=body,
+                refresh=True,
+                wait_for_completion=True,
+                conflicts="proceed",
+            )
+            updated = int(resp.get("updated", 0)) if isinstance(resp, dict) else 0
+            logger.info(
+                "merged allowed_users into existing chunks",
+                file_hash=file_hash,
+                new_users=list(new_users),
+                updated=updated,
+            )
+            return updated
+        except Exception as e:
+            logger.error(
+                "failed to merge allowed_users into existing chunks",
+                file_hash=file_hash,
+                new_users=list(new_users),
+                error=str(e),
+            )
+            raise
 
     async def check_filename_exists(
         self,
@@ -224,9 +309,39 @@ class TaskProcessor:
             owner_user_id, jwt_token
         )
 
-        # Check if already exists
+        # Check if the file content is already indexed (matched by file_hash
+        # → document_id). If so, we don't re-embed — instead we MERGE the
+        # calling tenant's allowed_users into the existing chunks. This
+        # preserves both:
+        #   (a) the original tenant's access (the chunks are not rewritten)
+        #   (b) the new tenant's access (their slug is added to the array)
+        #
+        # Without this, the second uploader's per-tenant tag would silently
+        # overwrite the first uploader's tag because the chunk `_id`s collide.
         if await self.check_document_exists(file_hash, opensearch_client):
-            return {"status": "unchanged", "id": file_hash}
+            # Determine which users to add. With API-key DLS, the route layer
+            # populates `acl.allowed_users` from the calling key's user_id;
+            # see api/v1/documents.py for the enforcement.
+            users_to_add: list = []
+            if acl and acl.allowed_users:
+                users_to_add = list(acl.allowed_users)
+            elif owner_user_id:
+                # Fallback: if no ACL was supplied but we know the owner,
+                # use that as the tenant tag (matches the legacy fallback
+                # below for fresh uploads).
+                users_to_add = [owner_user_id]
+
+            updated = 0
+            if users_to_add:
+                updated = await self.merge_allowed_users_for_document(
+                    file_hash, users_to_add, opensearch_client
+                )
+            return {
+                "status": "merged" if updated > 0 else "unchanged",
+                "id": file_hash,
+                "merged_users": users_to_add,
+                "chunks_updated": updated,
+            }
 
         # Ensure the embedding field exists for this model
         embedding_field_name = await ensure_embedding_field_exists(
